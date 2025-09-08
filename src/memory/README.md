@@ -1,271 +1,144 @@
 # Knowledge Graph Memory Server
 
-A basic implementation of persistent memory using a local knowledge graph. This lets Claude remember information about the user across chats.
+An advanced, dual-backend implementation of persistent memory. This server lets an AI assistant remember information about users and concepts across chats, using either a simple JSONL file or a powerful Neo4j graph database.
 
-## Core Concepts
+## Architecture
 
-### Entities
-Entities are the primary nodes in the knowledge graph. Each entity has:
-- A unique name (identifier)
-- An entity type (e.g., "person", "organization", "event")
-- A list of observations
+This server now supports two backend data stores for the knowledge graph:
 
-Example:
-```json
-{
-  "name": "John_Smith",
-  "entityType": "person",
-  "observations": ["Speaks fluent Spanish"]
-}
-```
+1.  **File-based (default)**: A simple, human-readable JSONL file (`memory.json`). This is the default mode and requires no setup.
+2.  **Neo4j**: A high-performance, scalable graph database that enables advanced search capabilities like semantic and graph traversal queries.
 
-### Relations
-Relations define directed connections between entities. They are always stored in active voice and describe how entities interact or relate to each other.
+The backend is chosen at startup based on the `MEMORY_BACKEND` environment variable.
 
-Example:
-```json
-{
-  "from": "John_Smith",
-  "to": "Anthropic",
-  "relationType": "works_at"
-}
-```
-### Observations
-Observations are discrete pieces of information about an entity. They are:
+## Configuration
 
-- Stored as strings
-- Attached to specific entities
-- Can be added or removed independently
-- Should be atomic (one fact per observation)
+The server is configured via environment variables.
 
-Example:
-```json
-{
-  "entityName": "John_Smith",
-  "observations": [
-    "Speaks fluent Spanish",
-    "Graduated in 2019",
-    "Prefers morning meetings"
-  ]
-}
-```
+### Basic Configuration
+
+-   `MEMORY_BACKEND`: Determines the data store.
+    -   `file` (or unset): Use the JSONL file backend.
+    -   `neo4j`: Use the Neo4j database backend.
+-   `MEMORY_FILE_PATH`: (File backend only) Path to the memory storage JSON file. Defaults to `memory.json` in the server's execution directory.
+
+### Neo4j Configuration
+
+These variables are **required** if `MEMORY_BACKEND=neo4j`:
+
+-   `NEO4J_URI`: The connection URI for the Neo4j instance (e.g., `neo4j://localhost:7687`).
+-   `NEO4J_USER`: The username for the Neo4j database.
+-   `NEO4J_PASSWORD`: The password for the Neo4j database.
+
+> **Note on Neo4j Setup**: When first connecting to the database, the server will automatically create a uniqueness constraint on entity names and a vector index for observations.
+
+---
 
 ## API
 
-### Tools
-- **create_entities**
-  - Create multiple new entities in the knowledge graph
-  - Input: `entities` (array of objects)
-    - Each object contains:
-      - `name` (string): Entity identifier
-      - `entityType` (string): Type classification
-      - `observations` (string[]): Associated observations
-  - Ignores entities with existing names
+All tools from the original API are preserved. The `search_nodes` tool has been significantly upgraded.
 
-- **create_relations**
-  - Create multiple new relations between entities
-  - Input: `relations` (array of objects)
-    - Each object contains:
-      - `from` (string): Source entity name
-      - `to` (string): Target entity name
-      - `relationType` (string): Relationship type in active voice
-  - Skips duplicate relations
+- **create_entities**: Creates new entities.
+- **create_relations**: Creates new relations.
+- **add_observations**: Adds observations to entities.
+- **delete_entities**: Deletes entities.
+- **delete_observations**: Deletes observations.
+- **delete_relations**: Deletes relations.
+- **read_graph**: Reads the entire graph.
+- **open_nodes**: Retrieves specific nodes by name.
 
-- **add_observations**
-  - Add new observations to existing entities
-  - Input: `observations` (array of objects)
-    - Each object contains:
-      - `entityName` (string): Target entity
-      - `contents` (string[]): New observations to add
-  - Returns added observations per entity
-  - Fails if entity doesn't exist
+### `search_nodes` (Advanced)
 
-- **delete_entities**
-  - Remove entities and their relations
-  - Input: `entityNames` (string[])
-  - Cascading deletion of associated relations
-  - Silent operation if entity doesn't exist
+This tool now accepts a single `query` object that specifies the search strategy and its parameters.
 
-- **delete_observations**
-  - Remove specific observations from entities
-  - Input: `deletions` (array of objects)
-    - Each object contains:
-      - `entityName` (string): Target entity
-      - `observations` (string[]): Observations to remove
-  - Silent operation if observation doesn't exist
+**Input**: `{ query: AdvancedSearchQuery }`
 
-- **delete_relations**
-  - Remove specific relations from the graph
-  - Input: `relations` (array of objects)
-    - Each object contains:
-      - `from` (string): Source entity name
-      - `to` (string): Target entity name
-      - `relationType` (string): Relationship type
-  - Silent operation if relation doesn't exist
+#### 1. Keyword Search
 
-- **read_graph**
-  - Read the entire knowledge graph
-  - No input required
-  - Returns complete graph structure with all entities and relations
+Performs a simple, case-insensitive text search across entity names, types, and observations.
 
-- **search_nodes**
-  - Search for nodes based on query
-  - Input: `query` (string)
-  - Searches across:
-    - Entity names
-    - Entity types
-    - Observation content
-  - Returns matching entities and their relations
+-   **Backend**: File, Neo4j
+-   **Query Object**: `{ "type": "keyword", "query": "your search term" }`
 
-- **open_nodes**
-  - Retrieve specific nodes by name
-  - Input: `names` (string[])
-  - Returns:
-    - Requested entities
-    - Relations between requested entities
-  - Silently skips non-existent nodes
+#### 2. Cypher Search
 
-# Usage with Claude Desktop
+<br>
 
-### Setup
+> **⚠️ Security Warning:** This query type is extremely powerful and intended for trusted users or internal development only. It allows the execution of arbitrary (read-only) Cypher queries. Exposing this to untrusted users can lead to data exposure and Denial of Service (DoS) attacks through resource-intensive queries. Use with extreme caution.
 
-Add this to your claude_desktop_config.json:
+<br>
 
-#### Docker
+Directly execute a read-only Cypher query against the Neo4j database.
 
-```json
-{
-  "mcpServers": {
-    "memory": {
-      "command": "docker",
-      "args": ["run", "-i", "-v", "claude-memory:/app/dist", "--rm", "mcp/memory"]
-    }
-  }
-}
-```
+-   **Backend**: Neo4j only
+-   **Query Object**: `{ "type": "cypher", "query": "MATCH (p:Person)-[:WORKS_AT]->(o:Organization) WHERE o.name CONTAINS 'Anthropic' RETURN p" }`
 
-#### NPX
-```json
-{
-  "mcpServers": {
-    "memory": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-memory"
-      ]
-    }
-  }
-}
-```
+#### 3. Semantic (Vector) Search
 
-#### NPX with custom setting
+Finds entities based on the semantic meaning of their observations, not just keywords.
 
-The server can be configured using the following environment variables:
+-   **Backend**: Neo4j only
+-   **How it works**: When observations are added, they are converted into a vector embedding. This search finds entities whose observation vectors are most similar to the vector of the query text.
+-   **Query Object**: `{ "type": "semantic", "text": "Who has experience in software development?", "topK": 3 }`
 
-```json
-{
-  "mcpServers": {
-    "memory": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-memory"
+#### 4. Traversal Search
+
+Performs a graph traversal starting from a specific node, following a defined pattern.
+
+-   **Backend**: Neo4j only
+-   **Query Object**: Find John's colleagues (people who work at the same organization).
+    ```json
+    {
+      "type": "traversal",
+      "startNode": "John_Smith",
+      "hops": [
+        {"type": "WORKS_AT", "direction": "out"},
+        {"type": "WORKS_AT", "direction": "in"}
       ],
+      "endLabel": "Person"
+    }
+    ```
+- **Hybrid Search**: A planned feature to combine multiple query types. Not yet implemented in the current version.
+
+---
+
+## Setup and Usage
+
+### Using the File Backend (Default)
+
+If you just want to run the server without a database, no special configuration is needed.
+
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
+    }
+  }
+}
+```
+
+### Using the Neo4j Backend
+
+1.  **Run Neo4j**: You must have a running Neo4j database.
+2.  **Set Environment Variables**: Configure the server with your database credentials.
+
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
       "env": {
-        "MEMORY_FILE_PATH": "/path/to/custom/memory.json"
+        "MEMORY_BACKEND": "neo4j",
+        "NEO4J_URI": "neo4j://localhost:7687",
+        "NEO4J_USER": "neo4j",
+        "NEO4J_PASSWORD": "your_password"
       }
     }
   }
 }
-```
-
-- `MEMORY_FILE_PATH`: Path to the memory storage JSON file (default: `memory.json` in the server directory)
-
-# VS Code Installation Instructions
-
-For quick installation, use one of the one-click installation buttons below:
-
-[![Install with NPX in VS Code](https://img.shields.io/badge/VS_Code-NPM-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=memory&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22%40modelcontextprotocol%2Fserver-memory%22%5D%7D) [![Install with NPX in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-NPM-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=memory&config=%7B%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22%40modelcontextprotocol%2Fserver-memory%22%5D%7D&quality=insiders)
-
-[![Install with Docker in VS Code](https://img.shields.io/badge/VS_Code-Docker-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=memory&config=%7B%22command%22%3A%22docker%22%2C%22args%22%3A%5B%22run%22%2C%22-i%22%2C%22-v%22%2C%22claude-memory%3A%2Fapp%2Fdist%22%2C%22--rm%22%2C%22mcp%2Fmemory%22%5D%7D) [![Install with Docker in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Docker-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=memory&config=%7B%22command%22%3A%22docker%22%2C%22args%22%3A%5B%22run%22%2C%22-i%22%2C%22-v%22%2C%22claude-memory%3A%2Fapp%2Fdist%22%2C%22--rm%22%2C%22mcp%2Fmemory%22%5D%7D&quality=insiders)
-
-For manual installation, you can configure the MCP server using one of these methods:
-
-**Method 1: User Configuration (Recommended)**
-Add the configuration to your user-level MCP configuration file. Open the Command Palette (`Ctrl + Shift + P`) and run `MCP: Open User Configuration`. This will open your user `mcp.json` file where you can add the server configuration.
-
-**Method 2: Workspace Configuration**
-Alternatively, you can add the configuration to a file called `.vscode/mcp.json` in your workspace. This will allow you to share the configuration with others.
-
-> For more details about MCP configuration in VS Code, see the [official VS Code MCP documentation](https://code.visualstudio.com/docs/copilot/mcp).
-
-#### NPX
-
-```json
-{
-  "servers": {
-    "memory": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-memory"
-      ]
-    }
-  }
-}
-```
-
-#### Docker
-
-```json
-{
-  "servers": {
-    "memory": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "-v",
-        "claude-memory:/app/dist",
-        "--rm",
-        "mcp/memory"
-      ]
-    }
-  }
-}
-```
-
-### System Prompt
-
-The prompt for utilizing memory depends on the use case. Changing the prompt will help the model determine the frequency and types of memories created.
-
-Here is an example prompt for chat personalization. You could use this prompt in the "Custom Instructions" field of a [Claude.ai Project](https://www.anthropic.com/news/projects). 
-
-```
-Follow these steps for each interaction:
-
-1. User Identification:
-   - You should assume that you are interacting with default_user
-   - If you have not identified default_user, proactively try to do so.
-
-2. Memory Retrieval:
-   - Always begin your chat by saying only "Remembering..." and retrieve all relevant information from your knowledge graph
-   - Always refer to your knowledge graph as your "memory"
-
-3. Memory
-   - While conversing with the user, be attentive to any new information that falls into these categories:
-     a) Basic Identity (age, gender, location, job title, education level, etc.)
-     b) Behaviors (interests, habits, etc.)
-     c) Preferences (communication style, preferred language, etc.)
-     d) Goals (goals, targets, aspirations, etc.)
-     e) Relationships (personal and professional relationships up to 3 degrees of separation)
-
-4. Memory Update:
-   - If any new information was gathered during the interaction, update your memory as follows:
-     a) Create entities for recurring organizations, people, and significant events
-     b) Connect them to the current entities using relations
-     c) Store facts about them as observations
 ```
 
 ## Building
@@ -273,11 +146,15 @@ Follow these steps for each interaction:
 Docker:
 
 ```sh
-docker build -t mcp/memory -f src/memory/Dockerfile . 
+docker build -t mcp/memory -f src/memory/Dockerfile .
 ```
 
-For Awareness: a prior mcp/memory volume contains an index.js file that could be overwritten by the new container. If you are using a docker volume for storage, delete the old docker volume's `index.js` file before starting the new container.
+## Dependencies
+
+This server now includes two important dependencies:
+- `neo4j-driver`: The official Neo4j driver for Node.js.
+- `@xenova/transformers`: A powerful library used to generate the vector embeddings for semantic search, running entirely locally.
 
 ## License
 
-This MCP server is licensed under the MIT License. This means you are free to use, modify, and distribute the software, subject to the terms and conditions of the MIT License. For more details, please see the LICENSE file in the project repository.
+This MCP server is licensed under the MIT License.
