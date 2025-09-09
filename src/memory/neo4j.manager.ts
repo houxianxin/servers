@@ -27,6 +27,12 @@ export async function getEmbedding(text: string): Promise<number[]> {
   return Array.from(result.data);
 }
 
+interface UpdateVector {
+    name: string;
+    observations: string[];
+    vector: number[];
+}
+
 export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
   private driver: Driver;
   private connected = false;
@@ -149,8 +155,8 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
             return new Map(result.records.map(r => [r.get('name'), r.get('observations')]));
         });
 
-        const updates = [];
-        const results = [];
+        const updates: UpdateVector[] = [];
+        const results: { entityName: string; addedObservations: string[]; }[] = [];
 
         for (const obs of observations) {
             const existingObs = existingEntities.get(obs.entityName);
@@ -212,13 +218,13 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
             return new Map(result.records.map(r => [r.get('name'), r.get('observations')]));
         });
 
-        const updates = [];
+        const updates: UpdateVector[] = [];
         for (const del of deletions) {
             const existingObs = existingEntities.get(del.entityName);
             if (!existingObs) continue;
 
             const toDeleteSet = new Set(del.observations);
-            const newObs = existingObs.filter(o => !toDeleteSet.has(o));
+            const newObs = existingObs.filter((o: string) => !toDeleteSet.has(o));
 
             if (newObs.length < existingObs.length) {
                  const vector = newObs.length > 0 ? await getEmbedding(newObs.join('; ')) : [];
@@ -305,7 +311,7 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
             const filteredEntities = graph.entities.filter(e =>
                 e.name.toLowerCase().includes(q) ||
                 e.entityType.toLowerCase().includes(q) ||
-                e.observations.some(o => o.toLowerCase().includes(q))
+                e.observations.some((o: string) => o.toLowerCase().includes(q))
             );
             const names = new Set(filteredEntities.map(e => e.name));
             const filteredRelations = graph.relations.filter(r => names.has(r.from) && names.has(r.to));
