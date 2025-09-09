@@ -8,7 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { FileKnowledgeGraphManager } from "./file.manager.js";
 import { Neo4jKnowledgeGraphManager } from "./neo4j.manager.js";
-import { AdvancedSearchQuery, IKnowledgeGraphManager, Entity } from "./types.js";
+import { AdvancedSearchQuery, IKnowledgeGraphManager, EntityV1 } from "./types.js";
 
 function getManager(): IKnowledgeGraphManager {
   const backend = process.env.MEMORY_BACKEND?.toLowerCase();
@@ -223,7 +223,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case "create_entities":
-      return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.createEntities(args.entities as Entity[]), null, 2) }] };
+      return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.createEntities(args.entities as { name: string; entityType: string; observations: string[] }[]), null, 2) }] };
     case "create_relations":
       return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.createRelations(args.relations as any[]), null, 2) }] };
     case "add_observations":
