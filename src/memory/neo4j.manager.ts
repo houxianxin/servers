@@ -1,4 +1,4 @@
-import neo4j, { Driver } from 'neo4j-driver';
+import neo4j, { Driver, Record as Neo4jRecord } from 'neo4j-driver';
 import crypto from 'crypto';
 import {
   AdvancedSearchQuery,
@@ -13,7 +13,8 @@ import {
   RelationV2,
 } from './types.js';
 
-// --- Embedding Logic (remains the same) ---
+// --- Helper Functions ---
+
 let embeddingPipeline: any = null;
 async function getPipeline() {
   if (embeddingPipeline === null) {
@@ -30,6 +31,21 @@ export async function getEmbedding(text: string): Promise<number[]> {
   const result = await pipe(text, { pooling: 'mean', normalize: true });
   return Array.from(result.data);
 }
+
+// This helper function will be used to safely parse DB records into V2 entities.
+function recordToV2Entity(record: Neo4jRecord): EntityV2 {
+    const entityProps = record.get('e').properties;
+    if (entityProps.observations && typeof entityProps.observations[0] === 'string') {
+        try {
+            entityProps.observations = entityProps.observations.map((obs: string) => JSON.parse(obs));
+        } catch (e) {
+            // Handle cases where parsing might fail for corrupted data
+            entityProps.observations = [];
+        }
+    }
+    return entityProps as EntityV2;
+}
+
 
 // --- V2 Refactored Manager ---
 export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
@@ -109,20 +125,22 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
   async createEntities(entities: { name: string; entityType: string; observations: string[] }[]): Promise<EntityV2[]> {
     this.checkConnection();
     const now = Date.now();
-    const entitiesWithVectors = await Promise.all(entities.map(async (v1Entity) => {
+    const entitiesToCreate = await Promise.all(entities.map(async (v1Entity) => {
         let vector: number[] = [];
         if (v1Entity.observations && v1Entity.observations.length > 0) {
             vector = await getEmbedding(v1Entity.observations.join('; '));
         }
+        const v2Observations = v1Entity.observations.map(obs => ({
+            id: crypto.randomUUID(),
+            content: obs,
+            source: 'createEntities',
+            timestamp: now,
+        }));
         return {
             name: v1Entity.name,
             tags: [v1Entity.entityType],
-            observations: v1Entity.observations.map(obs => ({
-                id: crypto.randomUUID(),
-                content: obs,
-                source: 'createEntities',
-                timestamp: now,
-            })),
+            // Serialize observations to JSON strings before sending to DB
+            observations: v2Observations.map(o => JSON.stringify(o)),
             createdAt: now,
             updatedAt: now,
             vector: vector,
@@ -137,14 +155,14 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
           MERGE (e:Entity {name: entityData.name})
           ON CREATE SET
             e.tags = entityData.tags,
-            e.observations = [obs IN entityData.observations | apoc.convert.toJson(obs)],
+            e.observations = entityData.observations,
             e.observationVector = entityData.vector,
             e.createdAt = entityData.createdAt,
             e.updatedAt = entityData.updatedAt
           RETURN e
         `;
-        const response = await tx.run(query, { entities: entitiesWithVectors });
-        return response.records.map(record => record.get('e').properties as EntityV2);
+        const response = await tx.run(query, { entities: entitiesToCreate });
+        return response.records.map(recordToV2Entity);
       });
       return result;
     } finally {
@@ -157,10 +175,7 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
         const session = this.driver.session();
         try {
             const entityNames = observations.map(o => o.entityName);
-        const existingEntitiesResult = await session.run(
-                'UNWIND $names AS name MATCH (e:Entity {name: name}) RETURN e',
-                { names: entityNames }
-            );
+            const existingEntitiesResult = await session.run('UNWIND $names AS name MATCH (e:Entity {name: name}) RETURN e', { names: entityNames });
             const existingEntities = new Map(existingEntitiesResult.records.map((r: any) => [r.get('e').properties.name, r.get('e').properties]));
 
             const updates: any[] = [];
@@ -193,7 +208,13 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
                     entity.updatedAt = now;
                     const fullText = entity.observations.map((o: ObservationV2) => o.content).join('; ');
                     const vector = await getEmbedding(fullText);
-                    updates.push({ name: entity.name, observations: entity.observations, updatedAt: entity.updatedAt, vector });
+                    updates.push({
+                        name: entity.name,
+                        // Serialize observations to JSON strings for storage
+                        observations: entity.observations.map(o => JSON.stringify(o)),
+                        updatedAt: entity.updatedAt,
+                        vector
+                    });
                 }
                 results.push({ entityName: obs.entityName, addedObservations: newObservations });
             }
@@ -203,7 +224,7 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
                     await tx.run(
                         `UNWIND $updates AS update
                          MATCH (e:Entity {name: update.name})
-                         SET e.observations = [obs IN update.observations | apoc.convert.toJson(obs)],
+                         SET e.observations = update.observations,
                              e.observationVector = update.vector,
                              e.updatedAt = update.updatedAt`,
                         { updates }
@@ -216,37 +237,43 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
         }
     }
 
-    // Keyword search needs to be updated for V2
     async searchNodes(query: AdvancedSearchQuery): Promise<KnowledgeGraph> {
         this.checkConnection();
         if (query.type === 'keyword') {
             const session = this.driver.session();
             try {
-                // Using a different query for keyword search now
                 const result = await session.run(
                     `MATCH (e:Entity)
-                     WHERE (e.name CONTAINS $q OR any(tag IN e.tags WHERE tag CONTAINS $q) OR any(obs IN e.observations WHERE apoc.convert.fromJsonMap(obs).content CONTAINS $q))
+                     WHERE e.name CONTAINS $q OR any(tag IN e.tags WHERE tag CONTAINS $q) OR any(obsString IN e.observations WHERE obsString CONTAINS $q)
                      RETURN e`,
                     { q: query.query }
                 );
-                const entities = result.records.map(r => r.get('e').properties as EntityV2);
-                // This is inefficient, a second query would be better to get relations between results
+                const entities = result.records.map(recordToV2Entity);
                 return { entities, relations: [] };
             } finally {
                 await session.close();
             }
         }
-        // ... other search types
-        return { entities: [], relations: [] }; // Placeholder for other types
+        // ... other search types will also need to be updated to parse observation strings
+        return { entities: [], relations: [] };
     }
 
-  // Other methods (createRelations, delete*, readGraph, etc.) would also need full V2 refactoring.
-  // This stubbing is for brevity to focus on the core user-reported logic.
+  // Other methods would also need refactoring
   async createRelations(relations: RelationV1[]): Promise<RelationV2[]> { return []; }
   async deleteEntities(entityNames: string[]): Promise<void> {}
   async deleteObservations(deletions: { entityName: string; observations: string[]; }[]): Promise<void> {}
   async deleteRelations(relations: RelationV1[]): Promise<void> {}
-  async readGraph(): Promise<KnowledgeGraph> { return { entities: [], relations: [] }; }
+  async readGraph(): Promise<KnowledgeGraph> {
+      this.checkConnection();
+      const session = this.driver.session();
+      try {
+          const result = await session.run('MATCH (e:Entity) RETURN e');
+          const entities = result.records.map(recordToV2Entity);
+          return { entities, relations: [] }; // Simplified for now
+      } finally {
+          await session.close();
+      }
+  }
   async openNodes(names: string[]): Promise<KnowledgeGraph> { return { entities: [], relations: [] }; }
   async shutdown(): Promise<void> {}
 }
