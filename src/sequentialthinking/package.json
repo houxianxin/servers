@@ -27,6 +27,6 @@
     "@types/node": "^22",
     "@types/yargs": "^17.0.32",
     "shx": "^0.3.4",
-    "typescript": "^5.9.2"
+    "typescript": "^5.3.3"
   }
 }
