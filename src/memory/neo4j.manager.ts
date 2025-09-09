@@ -111,6 +111,18 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
 
   async createEntities(entities: Entity[]): Promise<Entity[]> {
     this.checkConnection();
+
+    const entitiesWithVectors = await Promise.all(entities.map(async (entity) => {
+        let vector: number[] = [];
+        if (entity.observations && entity.observations.length > 0) {
+            vector = await getEmbedding(entity.observations.join('; '));
+        }
+        return {
+            ...entity,
+            vector: vector
+        };
+    }));
+
     const session = this.driver.session();
     try {
       const result = await session.executeWrite(async (tx) => {
@@ -119,11 +131,15 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
           MERGE (e:Entity {name: entityData.name})
           ON CREATE SET
             e.entityType = entityData.entityType,
-            e.observations = entityData.observations
+            e.observations = entityData.observations,
+            e.observationVector = entityData.vector
           RETURN e
         `;
-        const response = await tx.run(query, { entities });
-        return response.records.map(record => record.get('e').properties as Entity);
+        const response = await tx.run(query, { entities: entitiesWithVectors });
+        return response.records.map(record => {
+            const { vector, ...properties } = record.get('e').properties;
+            return properties as Entity;
+        });
       });
       return result;
     } finally {
