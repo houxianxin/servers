@@ -72,8 +72,8 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
       await session.run(`
         CREATE VECTOR INDEX entity_observations IF NOT EXISTS FOR (e:Entity) ON (e.observationVector)
         OPTIONS { indexConfig: {
-          'vector.dimensions': 384,
-          'vector.similarity_function': 'cosine'
+          `vector.dimensions`: 384,
+          `vector.similarity_function`: 'cosine'
         }}
       `);
     } finally {
