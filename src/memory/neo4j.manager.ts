@@ -69,13 +69,12 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
     const session = this.driver.session();
     try {
       await session.run('CREATE CONSTRAINT entity_name_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.name IS UNIQUE');
-      await session.run(`
-        CREATE VECTOR INDEX entity_observations IF NOT EXISTS FOR (e:Entity) ON (e.observationVector)
-        OPTIONS { indexConfig: {
-          `vector.dimensions`: 384,
-          `vector.similarity_function`: 'cosine'
-        }}
-      `);
+      const query = 'CREATE VECTOR INDEX entity_observations IF NOT EXISTS FOR (e:Entity) ON (e.observationVector) ' +
+                    "OPTIONS { indexConfig: { " +
+                    " `vector.dimensions`: 384, " +
+                    " `vector.similarity_function`: 'cosine' " +
+                    "} }";
+      await session.run(query);
     } finally {
       await session.close();
     }
