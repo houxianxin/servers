@@ -210,6 +210,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["names"],
         },
       },
+      {
+        name: "hybrid_search",
+        description: "Perform a hybrid search using a combination of keyword, semantic, and graph retrieval methods.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "The search query string."
+            },
+          },
+          required: ["query"],
+        },
+      },
     ],
   };
 });
@@ -243,6 +257,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.searchNodes(args.query as AdvancedSearchQuery), null, 2) }] };
     case "open_nodes":
       return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.openNodes(args.names as string[]), null, 2) }] };
+    case "hybrid_search":
+      return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.hybridSearch(args.query as string), null, 2) }] };
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

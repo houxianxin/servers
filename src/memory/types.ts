@@ -70,6 +70,8 @@ export function isV2Entity(entity: any): entity is EntityV2 {
   return typeof entity.observations[0] === 'object' && entity.observations[0] !== null;
 }
 
+import { SearchResultItem } from './search.types.js';
+
 // --- Core Interfaces ---
 
 /**
@@ -103,6 +105,8 @@ export interface IKnowledgeGraphManager {
   readGraph(): Promise<KnowledgeGraph>;
 
   searchNodes(query: AdvancedSearchQuery): Promise<KnowledgeGraph>;
+
+  hybridSearch(query: string): Promise<SearchResultItem[]>;
 
   openNodes(names: string[]): Promise<KnowledgeGraph>;
 

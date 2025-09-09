@@ -35,6 +35,8 @@ export async function getEmbedding(text: string): Promise<number[]> {
 // This helper function will be used to safely parse DB records into V2 entities.
 function recordToV2Entity(record: Neo4jRecord): EntityV2 {
     const entityProps = record.get('e').properties;
+    // The vector property is stored as a plain array, but observations are JSON strings.
+    // We need to parse the observations.
     if (entityProps.observations && typeof entityProps.observations[0] === 'string') {
         try {
             entityProps.observations = entityProps.observations.map((obs: string) => JSON.parse(obs));
@@ -47,10 +49,18 @@ function recordToV2Entity(record: Neo4jRecord): EntityV2 {
 }
 
 
+import { HybridSearchEngine } from './engine.hybrid.js';
+import { LocalModelProvider } from './model.provider.local.js';
+import { SparseRetriever } from './retriever.sparse.js';
+import { DenseRetriever } from './retriever.dense.js';
+import { GraphRetriever } from './retriever.graph.js';
+import { SearchResultItem } from './search.types.js';
+
 // --- V2 Refactored Manager ---
 export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
   private driver: Driver;
   private connected = false;
+  private modelProvider!: LocalModelProvider; // Definite assignment in init
 
   constructor() {
     const uri = process.env.NEO4J_URI;
@@ -67,6 +77,9 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
     try {
         await this.driver.verifyConnectivity();
         await this.initSchema();
+        this.modelProvider = await LocalModelProvider.create({
+          embeddingModel: 'Xenova/all-MiniLM-L6-v2',
+        });
         this.connected = true;
         console.error("Successfully connected to Neo4j and verified schema.");
     } catch (error: any) {
@@ -267,7 +280,8 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
       this.checkConnection();
       const session = this.driver.session();
       try {
-          const result = await session.run('MATCH (e:Entity) RETURN e');
+          // Ensure we return the vector property
+          const result = await session.run('MATCH (e:Entity) RETURN e, e.observationVector as vector');
           const entities = result.records.map(recordToV2Entity);
           return { entities, relations: [] }; // Simplified for now
       } finally {
@@ -275,5 +289,45 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
       }
   }
   async openNodes(names: string[]): Promise<KnowledgeGraph> { return { entities: [], relations: [] }; }
+
+  async hybridSearch(query: string): Promise<SearchResultItem[]> {
+    this.checkConnection();
+
+    // 1. Get all entities with their pre-computed vectors
+    const { entities } = await this.readGraph();
+    if (entities.length === 0) {
+      return [];
+    }
+
+    // 2. Prepare documents for retrievers
+    const sparseDocs = entities.map(e => ({
+      id: e.name,
+      content: e.observations.map(o => o.content).join('; ')
+    }));
+
+    // The vector property is now directly available on the entity object from readGraph
+    const denseDocs = entities.map(e => ({
+      id: e.name,
+      content: e.observations.map(o => o.content).join('; '),
+      vector: (e as any).observationVector || [] // Use stored vector
+    })).filter(d => d.vector.length > 0);
+
+
+    // 3. Instantiate Retrievers
+    const sparseRetriever = new SparseRetriever(sparseDocs);
+    // The modelProvider is now a class property, initialized once.
+    const denseRetriever = new DenseRetriever(this.modelProvider, denseDocs);
+    const graphRetriever = new GraphRetriever(this.driver);
+
+    // 4. Instantiate and run the search engine
+    const engine = new HybridSearchEngine();
+    const results = await engine.search(query, {
+      retrievers: [sparseRetriever, denseRetriever, graphRetriever],
+      fusionAlgorithm: 'RRF',
+    });
+
+    return results;
+  }
+
   async shutdown(): Promise<void> {}
 }
