@@ -68,13 +68,24 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
   private async initSchema(): Promise<void> {
     const session = this.driver.session();
     try {
-      await session.run('CREATE CONSTRAINT entity_name_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.name IS UNIQUE');
-      const query = 'CREATE VECTOR INDEX entity_observations IF NOT EXISTS FOR (e:Entity) ON (e.observationVector) ' +
-                    "OPTIONS { indexConfig: { " +
-                    " `vector.dimensions`: 384, " +
-                    " `vector.similarity_function`: 'cosine' " +
-                    "} }";
-      await session.run(query);
+      // Idempotently create constraint
+      const constraintResult = await session.run("SHOW CONSTRAINTS YIELD name WHERE name = 'entity_name_unique' RETURN name");
+      if (constraintResult.records.length === 0) {
+        await session.run('CREATE CONSTRAINT entity_name_unique FOR (e:Entity) REQUIRE e.name IS UNIQUE');
+        console.log("Created constraint: entity_name_unique");
+      }
+
+      // Idempotently create vector index
+      const indexResult = await session.run("SHOW VECTOR INDEXES YIELD name WHERE name = 'entity_observations' RETURN name");
+      if (indexResult.records.length === 0) {
+        const query = 'CREATE VECTOR INDEX entity_observations FOR (e:Entity) ON (e.observationVector) ' +
+                      "OPTIONS { indexConfig: { " +
+                      " `vector.dimensions`: 384, " +
+                      " `vector.similarity_function`: 'cosine' " +
+                      "} }";
+        await session.run(query);
+        console.log("Created vector index: entity_observations");
+      }
     } finally {
       await session.close();
     }
