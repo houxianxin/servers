@@ -27,6 +27,7 @@
     "onnxruntime-node": "1.17.0"
   },
   "devDependencies": {
+    "@jest/globals": "^29.7.0",
     "@types/jest": "^30.0.0",
     "@types/lunr": "^2.3.4",
     "@types/node": "^22",
