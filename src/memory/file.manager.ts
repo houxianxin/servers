@@ -11,7 +11,9 @@ import {
   RelationV1,
   RelationV2,
   AdvancedSearchQuery,
+  SearchResultItem,
 } from './types.js';
+import { SparseRetriever } from './retriever.sparse.js';
 
 export class FileKnowledgeGraphManager implements IKnowledgeGraphManager {
   private getMemoryFilePath(): string {
@@ -156,6 +158,31 @@ export class FileKnowledgeGraphManager implements IKnowledgeGraphManager {
   async deleteObservations(deletions: { entityName: string; observations: string[]; }[]): Promise<void> {}
   async deleteRelations(relations: RelationV1[]): Promise<void> {}
   async searchNodes(query: AdvancedSearchQuery): Promise<KnowledgeGraph> { return { entities: [], relations: [] };}
+
+  async hybridSearch(query: string): Promise<SearchResultItem[]> {
+    const { entities } = await this.readGraph();
+    if (entities.length === 0) {
+      return [];
+    }
+
+    const sparseDocs = entities.map(e => ({
+      id: e.name,
+      content: e.observations.map(o => o.content).join('; ')
+    }));
+
+    const sparseRetriever = new SparseRetriever(sparseDocs);
+    const sparseResults = await sparseRetriever.retrieve(query);
+
+    // Convert retriever results to the final SearchResultItem format
+    return sparseResults.map(result => ({
+      id: result.id,
+      content: result.content,
+      score: result.score,
+      retrievedBy: ['sparse'],
+      originalScores: [{ retriever: 'sparse', score: result.score }],
+    }));
+  }
+
   async openNodes(names: string[]): Promise<KnowledgeGraph> { return { entities: [], relations: [] };}
   async shutdown(): Promise<void> { return Promise.resolve(); }
   async verifyConnectivity(): Promise<{ok: boolean, error?: string}> { return Promise.resolve({ ok: true }); }
