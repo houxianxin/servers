@@ -1,17 +1,15 @@
 import {
     pipeline,
     env,
-    Pipeline,
     FeatureExtractionPipeline,
   } from '@xenova/transformers';
-import onnx from 'onnxruntime-node';
   import {
     IModelProvider,
     LocalModelProviderConfig,
   } from './search.types.js';
 
-  // Use the native ONNX runtime for Node.js
-  env.backends.onnx = onnx;
+  // Allow the library to use its default behavior for loading models.
+  // In a Node.js environment, it will use a WASM-based backend.
   env.allowLocalModels = true;
 
   /**
@@ -52,7 +50,6 @@ import onnx from 'onnxruntime-node';
         pooling: 'mean',
         normalize: true,
       });
-      // Convert the Tensor object to a nested array and return the inner array (embedding).
       return Array.from(result.data as Float32Array);
     }
 
@@ -62,14 +59,11 @@ import onnx from 'onnxruntime-node';
      * @returns A promise that resolves to an array of embedding vectors.
      */
     public async getEmbeddings(texts: string[]): Promise<number[][]> {
-      // The library handles batching internally.
       const result = await this.extractor(texts, {
         pooling: 'mean',
         normalize: true,
       });
 
-      // The result for a batch is a Tensor of shape [batch_size, embedding_dim].
-      // We need to convert it to a nested number array.
       const batchSize = result.dims[0];
       const embeddingDim = result.dims[1];
       const flatData = Array.from(result.data as Float32Array);

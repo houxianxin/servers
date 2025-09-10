@@ -12,8 +12,9 @@ import {
   RelationV2,
   AdvancedSearchQuery,
 } from './types.js';
-import { SearchResultItem } from './search.types.js';
+import { SearchResultItem, HybridSearchConfig } from './search.types.js';
 import { SparseRetriever } from './retriever.sparse.js';
+import { HybridSearchEngine } from './engine.hybrid.js';
 
 export class FileKnowledgeGraphManager implements IKnowledgeGraphManager {
   private getMemoryFilePath(): string {
@@ -165,22 +166,21 @@ export class FileKnowledgeGraphManager implements IKnowledgeGraphManager {
       return [];
     }
 
+    // For the file manager, "hybrid" search only consists of sparse retrieval.
+    // However, we use the HybridSearchEngine to maintain architectural consistency.
     const sparseDocs = entities.map(e => ({
       id: e.name,
       content: e.observations.map(o => o.content).join('; ')
     }));
-
     const sparseRetriever = new SparseRetriever(sparseDocs);
-    const sparseResults = await sparseRetriever.retrieve(query);
 
-    // Convert retriever results to the final SearchResultItem format
-    return sparseResults.map(result => ({
-      id: result.id,
-      content: result.content,
-      score: result.score,
-      retrievedBy: ['sparse'],
-      originalScores: [{ retriever: 'sparse', score: result.score }],
-    }));
+    const engine = new HybridSearchEngine();
+    const config: HybridSearchConfig = {
+      retrievers: [sparseRetriever],
+      fusionAlgorithm: 'RRF',
+    };
+
+    return engine.search(query, config);
   }
 
   async openNodes(names: string[]): Promise<KnowledgeGraph> { return { entities: [], relations: [] };}
