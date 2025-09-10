@@ -276,36 +276,44 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
     this.checkConnection();
     const session = this.driver.session();
     try {
-      const result = await session.executeWrite(async (tx) => {
-        // Using UNWIND for batching is more efficient.
-        const query = `
-          UNWIND $relations AS rel
-          MATCH (a:Entity {name: rel.from})
-          MATCH (b:Entity {name: rel.to})
-          // Use apoc.merge.relationship for dynamic relationship types
-          CALL apoc.merge.relationship(a, rel.relationType, {}, {}, b)
-          YIELD rel as createdRel
-          RETURN createdRel
-        `;
-        // We can't return the created relationship directly in a clean way without APOC.
-        // A simpler approach for now is to just return the input relations
-        // on success, assuming they were all created.
-        // A more robust implementation would require APOC or multiple queries.
-        await tx.run(query, { relations });
+      // Execute each relation creation in a transaction.
+      // While less performant than a single UNWIND, this avoids APOC dependency
+      // and is safer for handling dynamic relationship types.
+      const createdRelations = await session.executeWrite(async (tx) => {
+        const results: RelationV2[] = [];
         const now = Date.now();
-        return relations.map(r => ({
-          ...r,
-          properties: {},
-          createdAt: now,
-        }));
+
+        for (const rel of relations) {
+          // Sanitize the relationship type to prevent Cypher injection.
+          // This allows only alphanumeric characters and underscores.
+          const sanitizedType = rel.relationType.replace(/[^a-zA-Z0-9_]/g, '');
+          if (!sanitizedType) {
+            // Skip if the relationType is empty or only contains invalid characters.
+            continue;
+          }
+
+          // Use backticks around the sanitized type to handle reserved keywords.
+          const query = `
+            MATCH (a:Entity {name: $from})
+            MATCH (b:Entity {name: $to})
+            MERGE (a)-[:\`${sanitizedType}\`]->(b)
+          `;
+
+          await tx.run(query, { from: rel.from, to: rel.to });
+
+          results.push({
+            ...rel,
+            properties: {}, // Assuming no properties are passed in V1 format
+            createdAt: now,
+          });
+        }
+        return results;
       });
-      return result;
+      return createdRelations;
     } catch (error) {
       console.error("Failed to create relations:", error);
-      // Return empty array on failure to match previous stub behavior
       return [];
-    }
-    finally {
+    } finally {
       await session.close();
     }
   }
