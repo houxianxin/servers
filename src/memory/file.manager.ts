@@ -11,8 +11,8 @@ import {
   RelationV1,
   RelationV2,
   AdvancedSearchQuery,
-  SearchResultItem,
 } from './types.js';
+import { SearchResultItem } from './search.types.js';
 import { SparseRetriever } from './retriever.sparse.js';
 
 export class FileKnowledgeGraphManager implements IKnowledgeGraphManager {
