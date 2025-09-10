@@ -7,8 +7,5 @@
     },
     "include": [
       "./**/*.ts"
-    ],
-    "files": [
-      "./types.d.ts"
     ]
   }
