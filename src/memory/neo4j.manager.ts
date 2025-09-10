@@ -286,11 +286,14 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
         for (const rel of relations) {
           // Sanitize the relationship type to prevent Cypher injection.
           // This allows only alphanumeric characters and underscores.
-          const sanitizedType = rel.relationType.replace(/[^a-zA-Z0-9_]/g, '');
-          if (!sanitizedType) {
-            // Skip if the relationType is empty or only contains invalid characters.
-            continue;
-          }
+          const sanitizedType = rel.relationType;
+          // 这里的策略影响使用中文的关系，注释掉
+          // const sanitizedType = rel.relationType.replace(/[^a-zA-Z0-9_]/g, '');
+
+          // if (!sanitizedType) {
+          //   // Skip if the relationType is empty or only contains invalid characters.
+          //   continue;
+          // }
 
           // Use backticks around the sanitized type to handle reserved keywords.
           const query = `
@@ -312,7 +315,8 @@ export class Neo4jKnowledgeGraphManager implements IKnowledgeGraphManager {
       return createdRelations;
     } catch (error) {
       console.error("Failed to create relations:", error);
-      return [];
+      throw error;
+      // return [];
     } finally {
       await session.close();
     }
